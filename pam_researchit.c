@@ -10,15 +10,20 @@
 #include <syslog.h>
 #include <grp.h>
 #include <pwd.h>
+#include <regex.h>
 
 
 #define MODULE_NAME "pam_researchit"
 #define MAX_GROUPS 128
 //group name length limit on rhel
 #define GROUP_NAME_LIMIT 32
+#define FILTER_REGEX "^[[:alnum:]]*-lab$"
 
+char** get_string_array(uint32_t nstrings, uint32_t length);
+char** get_group_array(uint32_t ngroups);
+void free_string_array(char** array, uint32_t size);
 uint32_t get_groups(const char* username, char** buf);
-char** filter_groups(char** buf);
+uint32_t filter_groups(char*** buf, uint32_t size);
 
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
@@ -27,7 +32,12 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	const void** item;
 	const char* username;
 	uint32_t ngroups = MAX_GROUPS;
-	char** groups = calloc(MAX_GROUPS, sizeof(char)*GROUP_NAME_LIMIT);
+	char** groups = get_string_array(MAX_GROUPS, GROUP_NAME_LIMIT+1);
+	if(groups==-1)
+	{
+		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
+		return PAM_SYSTEM_ERR;
+	}
 
 
 	//get username
@@ -38,7 +48,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		return PAM_SYSTEM_ERR;
 
 	}
-	strcopy(username,(const char *)item[0]);
+	strcpy(username,(const char *)item[0]);
 	
 	
 	// ZFS STUFF //either use libzfs_core or fork() zfs
@@ -77,7 +87,47 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	// 			check, eliminate until successful and pick default, if fail whine loudly
 }
 /**
- * Returns a list of groups the given username is in
+ * returns pointer to an array of strings of the given dimensions
+ */
+char** get_string_array(uint32_t nstrings, uint32_t length)
+{
+	char** ret = calloc(nstrings, sizeof(char*));
+	if(ret==NULL)
+	{
+		// allocation failed
+		return (char**)-1;
+	}
+	for(int i = 0 ; i < nstrings; i++)
+	{
+		ret[i] = calloc(length, sizeof(char));
+		if(ret[i] == NULL)
+		{
+			// allocation failed;
+			return (char**)-1;
+		}
+	}
+	return ret;
+}
+/**
+ * returns empty aray for ngroups groups
+ */
+char** get_group_array(uint32_t ngroups)
+{
+	return get_string_array(ngroups,GROUP_NAME_LIMIT+1);
+}
+/**
+ * free an array of strings of given size.
+ */
+void free_string_array(char** array, uint32_t size)
+{
+	for(int i = 0; i < size; i++)
+	{
+		free(array[i]);
+	}
+	free(array);
+}
+/**
+ * Returns the number of groups the given username is in
  * param username the username to look up groups for
  * param buf an array of strings representing the group names
  */
@@ -95,21 +145,61 @@ uint32_t get_groups(const char* username, char** buf)
 	// get gids of groups user is in
 	retval = getgrouplist(username, userpwd->pw_gid, groups, &ngroups);
 	if(retval == -1)
-		return NULL;
+		return -1;
 	for(int i = 0; i < ngroups; i++)
 	{
-		if(groups[i] < 1000);
-			continue;
 		usergrp = getgrgid(groups[i]);
-		buf[i] = usergrp->gr_name;
+		strncpy(buf[i], usergrp->gr_name,GROUP_NAME_LIMIT+1);
 	}
 	free(groups);
 	return ngroups;
 }
 
-char** filter_groups(char** buf)
+/**
+ * Returns the number of groups that match the specified filter
+ * this will also be the size of buf upon returning. Returns -1
+ * if error.
+ * param buf pointer to the string array that will be filtered
+ * param size size of the array of strings
+ */
+uint32_t filter_groups(char*** buf, uint32_t size)
 {
-	//TODO return a filtered array of groups meeting selection criteria
-	// for us we'll just filter for -lab maybe make that a defined thing above.
+	regex_t regex;
+	char** temp = get_group_array(size);
+	if(temp==(char**)-1)
+	{
+		// error
+		return -1;
+	}
+    char** temper;
+	int ret = regcomp(&regex, FILTER_REGEX, REG_ICASE|REG_NOSUB|REG_EXTENDED);
+	if(ret)
+	{
+		// regex compilation error
+		return -1;
+	}
+	uint32_t j = 0;
+	for(int i = 0; i < size; i++)
+	{
+		if(!regexec(&regex,(*buf)[i],0,NULL,0))
+		{
+			// match
+			strncpy(temp[j++],(*buf)[i],GROUP_NAME_LIMIT+1);
+		}
+	}
+    temper = get_group_array(j);
+	if(temper==(char**)-1)
+	{
+		// error
+		return -1;
+	}
+    for(int i = 0; i < j; i++)
+    {
+        strncpy(temper[i], temp[i],GROUP_NAME_LIMIT+1);
+    }
+    free_string_array(temp,size);
+	free_string_array(*buf,size);
+	*buf = temper;
+	return j;
 
 }
