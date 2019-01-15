@@ -30,6 +30,7 @@ void free_string_array(char** array, uint32_t size);
 uint32_t get_groups(const char* username, char** buf);
 uint32_t filter_groups(char*** buf, uint32_t size, const char* regex);
 uint32_t create_home_dataset(const char* name, const char* parent);
+uint32_t slurm_check_user(const char* name);
 
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
@@ -92,21 +93,31 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	retval = get_groups(username,groups);
 	if(retval == -1)
 	{
-		pam_syslog(pamh, LOG_INFO, "Failed to get group list for user %s",username);
+		pam_syslog(pamh, LOG_INFO, "Failed to get group list for user %s", username);
 		error = PAM_SESSION_ERR;
 		goto cleanup;
 	}
 	retval = filter_groups(&groups,retval,group_regex);
 	if(retval == -1)
 	{
-		pam_syslog(pamh, LOG_INFO, "Failed to filter groups for whatever reason for user %s.",username);
+		pam_syslog(pamh, LOG_INFO, "Failed to filter groups for whatever reason for user %s.", username);
 		error = PAM_SESSION_ERR;
 		goto cleanup;
 	}
 	
 	
 	// ZFS STUFF
-	create_home_dataset(username,zfs_root);
+	retval = create_home_dataset(username,zfs_root);
+	//honestly it's not super important if the dataset creation fails.
+	if(retval)
+	{
+		if(retval==ENAMETOOLONG)
+		{
+			pam_syslog(pamh, LOG_INFO, "Dataset creation for %s failed due to having too long a name.", username);
+		} else {
+			pam_syslog(pamh, "Dataset creation for %s failed for some reason.", username);
+		}
+	}
 	// determine group membership
 	// probably use slurmacctmgr
 	// 	//TODO
@@ -122,25 +133,15 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	// requiring admins to add the lab accounts prior to things being expected to work is easier logically and will simplify the pseudo code below
 	//
 	// 	if one lab group
-	// 		if we're going to allow this module to create accounts, then create lab account, add user with DefaultAccount
-	// 		if not fail and whine about it
+	// 		add user account with defaultaccount of lab group, if fail complain
 	// 	if more than one lab group
-	// 		if we're allowed to add accounts
-	// 			if we have membership list of las-machinename-group
-	// 				if only one group is in list, add it
-	// 				if multiple all in list pick one to be default (admin can change later)
-	// 			if we don't have membership list
-	// 				if only one, attempt to add, if fail, whine loudly
-	// 				if multiple
-	// 					try until successful, elminate bad groups, pick default at random, if fail whine loudly
-	// 		if not allowed to add accounts
-	// 			check, eliminate until successful and pick default, if fail whine loudly
-	cleanup:
-		free(username);
-		free(zfs_root);
-		free(group_regex);
-		free(groups);
-		return error;
+	// 		pick a default, add associations for all others, if fail complain.
+cleanup:
+	free(username);
+	free(zfs_root);
+	free(group_regex);
+	free(groups);
+	return error;
 }
 /**
  * returns pointer to an array of strings of the given dimensions
@@ -280,7 +281,7 @@ uint32_t create_home_dataset(const char* name, const char* parent)
 	if(error)
 	{
 		// failed to init libzfs_core
-		return error;
+		goto cleanup;
 	}
 	// allocate space for dataset name string
 	char* dataset = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
@@ -291,16 +292,18 @@ uint32_t create_home_dataset(const char* name, const char* parent)
 	if(lzc_exists(dataset))
 	{
 		// dataset already exists
-		libzfs_core_fini();
-		return 0;
+		// this isn't an error dingus
+		// this is like the most common mode of operation
+		error = 0;
+		goto cleanup;
 	}
 	// create the dataset as a regular zfs filesystem
 	error = lzc_create(dataset,LZC_DATSET_TYPE_ZFS,NULL);
 	if(error)
 	{
-		return error;
+		goto cleanup;
 	}
-	//close libzfs_core
+cleanup:
 	libzfs_core_fini();
-	return 0;
+	return error;
 }
