@@ -11,53 +11,103 @@
 #include <grp.h>
 #include <pwd.h>
 #include <regex.h>
-
+#include <errno.h>
+#include <unistd.h>
 
 #define MODULE_NAME "pam_researchit"
 #define MAX_GROUPS 128
-//group name length limit on rhel
+// group name length limit on rhel
 #define GROUP_NAME_LIMIT 32
-#define FILTER_REGEX "^[[:alnum:]]*-lab$"
+#define USER_NAME_LIMIT 32
+// why is your regex longer than 255
+#define MAX_REGEX_LENGTH 255
+#define DEFAULT_GROUP_REGEX "^[[:alnum:]]*-lab$"
+#define DEFAULT_ZFS_ROOT "tank/home"
 
 char** get_string_array(uint32_t nstrings, uint32_t length);
 char** get_group_array(uint32_t ngroups);
 void free_string_array(char** array, uint32_t size);
 uint32_t get_groups(const char* username, char** buf);
-uint32_t filter_groups(char*** buf, uint32_t size);
+uint32_t filter_groups(char*** buf, uint32_t size, const char* regex);
+uint32_t create_home_dataset(const char* name, const char* parent);
 
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
 	//TODO
 	uint32_t retval;
-	const void** item;
-	const char* username;
+	uint32_t error = PAM_SUCCESS;
+	char** temp;
+	char* username;
+	char* zfs_root;
+	char* group_regex;
 	uint32_t ngroups = MAX_GROUPS;
-	char** groups = get_string_array(MAX_GROUPS, GROUP_NAME_LIMIT+1);
-	if(groups==-1)
+	char** groups = get_group_array(MAX_GROUPS);
+	if(groups == (char**)-1)
 	{
 		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
-		return PAM_SYSTEM_ERR;
+		error = PAM_SYSTEM_ERR;
+		goto cleanup;
+	}
+	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
+	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
+	zfs_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
+	if(username ==(char**)NULL || group_regex == (char**)NULL || zfs_root == (char**)NULL)
+	{
+		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
+		error = PAM_SYSTEM_ERR;
+		goto cleanup;
+	}
+	// argument parsing
+	zfs_root = DEFAULT_ZFS_ROOT;
+	group_regex = DEFAULT_GROUP_REGEX;
+	for(int i = 0; i < argc; i++)
+	{
+		char* key = strtok(argv[i],"=");
+		char* value = strtok(NULL,"=");
+		if(strcmp(key, "zfs_root") == 0)
+		{
+			strncpy(zfs_root, value, ZFS_MAX_DATASET_NAME_LEN);
+		}
+		if(strcmp(key, "group_regex")== 0)
+		{
+			strncpy(group_regex, value, MAX_REGEX_LENGTH);
+		}
 	}
 
-
 	//get username
-	retval = pam_get_item(pamh, PAM_USER, item);
+	retval = pam_get_user(pamh, temp, "\0");
 	if(retval != PAM_SUCCESS)
 	{
 		pam_syslog(pamh, LOG_INFO, "Failed to get username.");
-		return PAM_SYSTEM_ERR;
+		error = PAM_SYSTEM_ERR;
+		goto cleanup;
 
 	}
-	strcpy(username,(const char *)item[0]);
+	strcpy(username,*temp);
+	if(username=="root")
+	{
+		//stop and exit
+	}
+	// get and then filter groups
+	retval = get_groups(username,groups);
+	if(retval == -1)
+	{
+		pam_syslog(pamh, LOG_INFO, "Failed to get group list for user %s",username);
+		error = PAM_SESSION_ERR;
+		goto cleanup;
+	}
+	retval = filter_groups(&groups,retval,group_regex);
+	if(retval == -1)
+	{
+		pam_syslog(pamh, LOG_INFO, "Failed to filter groups for whatever reason for user %s.",username);
+		error = PAM_SESSION_ERR;
+		goto cleanup;
+	}
 	
 	
-	// ZFS STUFF //either use libzfs_core or fork() zfs
-	// get root data set from parameter or hardcode
-	// check if root/USERNAME exists
-	// if not, create
-	//
+	// ZFS STUFF
+	create_home_dataset(username,zfs_root);
 	// determine group membership
-	// if possible, get group list of las-machinename-group
 	// probably use slurmacctmgr
 	// 	//TODO
 	//	decide if make a pseudo library (unmaintainable)
@@ -85,6 +135,12 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	// 					try until successful, elminate bad groups, pick default at random, if fail whine loudly
 	// 		if not allowed to add accounts
 	// 			check, eliminate until successful and pick default, if fail whine loudly
+	cleanup:
+		free(username);
+		free(zfs_root);
+		free(group_regex);
+		free(groups);
+		return error;
 }
 /**
  * returns pointer to an array of strings of the given dimensions
@@ -162,7 +218,7 @@ uint32_t get_groups(const char* username, char** buf)
  * param buf pointer to the string array that will be filtered
  * param size size of the array of strings
  */
-uint32_t filter_groups(char*** buf, uint32_t size)
+uint32_t filter_groups(char*** buf, uint32_t size, const char* regex)
 {
 	regex_t regex;
 	char** temp = get_group_array(size);
@@ -172,7 +228,7 @@ uint32_t filter_groups(char*** buf, uint32_t size)
 		return -1;
 	}
     char** temper;
-	int ret = regcomp(&regex, FILTER_REGEX, REG_ICASE|REG_NOSUB|REG_EXTENDED);
+	int ret = regcomp(&regex, regex, REG_ICASE|REG_NOSUB|REG_EXTENDED);
 	if(ret)
 	{
 		// regex compilation error
@@ -202,4 +258,49 @@ uint32_t filter_groups(char*** buf, uint32_t size)
 	*buf = temper;
 	return j;
 
+}
+/**
+ * Creates a ZFS dataset with the name parent/name
+ * the parent is required to exist.
+ * param name name of the dataset.
+ * param parent parent dataset this will be a child of.
+ */
+uint32_t create_home_dataset(const char* name, const char* parent)
+{
+	// TODO
+	// testing
+	uint32_t error = 0;
+	if(strnlen(parent,ZFS_MAX_DATASET_NAME_LEN)+strnlen(name,ZFS_MAX_DATASET_NAME_LEN)+1 > ZFS_MAX_DATASET_NAME_LEN)
+	{
+		// name would be too long.
+		return ENAMETOOLONG;
+	}
+	// init
+	error = libzfs_core_init();
+	if(error)
+	{
+		// failed to init libzfs_core
+		return error;
+	}
+	// allocate space for dataset name string
+	char* dataset = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
+	//assemble the string
+	strncpy(dataset, parent, ZFS_MAX_DATASET_NAME_LEN);
+	strncpy(dataset,"/\0",2);
+	strncpy(dataset,name,ZFS_MAX_DATASET_NAME_LEN);
+	if(lzc_exists(dataset))
+	{
+		// dataset already exists
+		libzfs_core_fini();
+		return 0;
+	}
+	// create the dataset as a regular zfs filesystem
+	error = lzc_create(dataset,LZC_DATSET_TYPE_ZFS,NULL);
+	if(error)
+	{
+		return error;
+	}
+	//close libzfs_core
+	libzfs_core_fini();
+	return 0;
 }
