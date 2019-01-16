@@ -13,6 +13,9 @@
 #include <regex.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <wait.h>
+#include <fcntl.h>
 
 #define MODULE_NAME "pam_researchit"
 #define MAX_GROUPS 128
@@ -24,24 +27,27 @@
 #define DEFAULT_GROUP_REGEX "^[[:alnum:]]*-lab$"
 #define DEFAULT_ZFS_ROOT "tank/home"
 
-char** get_string_array(uint32_t nstrings, uint32_t length);
-char** get_group_array(uint32_t ngroups);
-void free_string_array(char** array, uint32_t size);
-uint32_t get_groups(const char* username, char** buf);
-uint32_t filter_groups(char*** buf, uint32_t size, const char* regex);
-uint32_t create_home_dataset(const char* name, const char* parent);
-uint32_t slurm_check_user(const char* name);
+char** get_string_array(int32_t nstrings, int32_t length);
+char** get_group_array(int32_t ngroups);
+void free_string_array(char** array, int32_t size);
+int32_t get_groups(const char* username, char** buf);
+int32_t filter_groups(char*** buf, int32_t size, const char* regex);
+int32_t create_home_dataset(const char* name, const char* parent);
+int32_t run_command(const char* cmd, char** argv, void* output);
+int32_t slurm_check_user(const char* name);
+int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts);
 
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
 	//TODO
-	uint32_t retval;
-	uint32_t error = PAM_SUCCESS;
-	char** temp;
+	int32_t retval;
+	int32_t error = PAM_SUCCESS;
+	const char** temp;
 	char* username;
 	char* zfs_root;
 	char* group_regex;
-	uint32_t ngroups = MAX_GROUPS;
+	char* token;
+	int32_t ngroups = MAX_GROUPS;
 	char** groups = get_group_array(MAX_GROUPS);
 	if(groups == (char**)-1)
 	{
@@ -52,7 +58,8 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
 	zfs_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
-	if(username ==(char**)NULL || group_regex == (char**)NULL || zfs_root == (char**)NULL)
+	token = calloc(256, sizeof(char));
+	if(username == (char*)NULL || group_regex == (char*)NULL || zfs_root == (char*)NULL || token == (char*)NULL)
 	{
 		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
 		error = PAM_SYSTEM_ERR;
@@ -63,15 +70,16 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	group_regex = DEFAULT_GROUP_REGEX;
 	for(int i = 0; i < argc; i++)
 	{
-		char* key = strtok(argv[i],"=");
+		strncpy(token, argv[i], 256);
+		char* key = strtok(token,"=");
 		char* value = strtok(NULL,"=");
 		if(strcmp(key, "zfs_root") == 0)
 		{
-			strncpy(zfs_root, value, ZFS_MAX_DATASET_NAME_LEN);
+			strncpy(zfs_root, value, ZFS_MAX_DATASET_NAME_LEN+1);
 		}
 		if(strcmp(key, "group_regex")== 0)
 		{
-			strncpy(group_regex, value, MAX_REGEX_LENGTH);
+			strncpy(group_regex, value, MAX_REGEX_LENGTH+1);
 		}
 	}
 
@@ -115,7 +123,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		{
 			pam_syslog(pamh, LOG_INFO, "Dataset creation for %s failed due to having too long a name.", username);
 		} else {
-			pam_syslog(pamh, "Dataset creation for %s failed for some reason.", username);
+			pam_syslog(pamh, LOG_INFO, "Dataset creation for %s failed for some reason.", username);
 		}
 	}
 	// determine group membership
@@ -141,12 +149,13 @@ cleanup:
 	free(zfs_root);
 	free(group_regex);
 	free(groups);
+	free(token);
 	return error;
 }
 /**
  * returns pointer to an array of strings of the given dimensions
  */
-char** get_string_array(uint32_t nstrings, uint32_t length)
+char** get_string_array(int32_t nstrings, int32_t length)
 {
 	char** ret = calloc(nstrings, sizeof(char*));
 	if(ret==NULL)
@@ -168,14 +177,14 @@ char** get_string_array(uint32_t nstrings, uint32_t length)
 /**
  * returns empty aray for ngroups groups
  */
-char** get_group_array(uint32_t ngroups)
+char** get_group_array(int32_t ngroups)
 {
 	return get_string_array(ngroups,GROUP_NAME_LIMIT+1);
 }
 /**
  * free an array of strings of given size.
  */
-void free_string_array(char** array, uint32_t size)
+void free_string_array(char** array, int32_t size)
 {
 	for(int i = 0; i < size; i++)
 	{
@@ -188,11 +197,11 @@ void free_string_array(char** array, uint32_t size)
  * param username the username to look up groups for
  * param buf an array of strings representing the group names
  */
-uint32_t get_groups(const char* username, char** buf)
+int32_t get_groups(const char* username, char** buf)
 {
 	gid_t* groups; /** array of gid_t (gids basically) */
-	uint32_t ngroups = MAX_GROUPS; /** number of groups returned by getgrouplist */
-	uint32_t retval;
+	int32_t ngroups = MAX_GROUPS; /** number of groups returned by getgrouplist */
+	int32_t retval;
 	struct passwd* userpwd; /** struct for passwd info */
 	struct group* usergrp; /** struct for group info*/
 
@@ -219,7 +228,7 @@ uint32_t get_groups(const char* username, char** buf)
  * param buf pointer to the string array that will be filtered
  * param size size of the array of strings
  */
-uint32_t filter_groups(char*** buf, uint32_t size, const char* regex)
+int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 {
 	regex_t regex;
 	char** temp = get_group_array(size);
@@ -229,13 +238,13 @@ uint32_t filter_groups(char*** buf, uint32_t size, const char* regex)
 		return -1;
 	}
     char** temper;
-	int ret = regcomp(&regex, regex, REG_ICASE|REG_NOSUB|REG_EXTENDED);
+	int ret = regcomp(&regex, regex_string, REG_ICASE|REG_NOSUB|REG_EXTENDED);
 	if(ret)
 	{
 		// regex compilation error
 		return -1;
 	}
-	uint32_t j = 0;
+	int32_t j = 0;
 	for(int i = 0; i < size; i++)
 	{
 		if(!regexec(&regex,(*buf)[i],0,NULL,0))
@@ -266,11 +275,11 @@ uint32_t filter_groups(char*** buf, uint32_t size, const char* regex)
  * param name name of the dataset.
  * param parent parent dataset this will be a child of.
  */
-uint32_t create_home_dataset(const char* name, const char* parent)
+int32_t create_home_dataset(const char* name, const char* parent)
 {
 	// TODO
 	// testing
-	uint32_t error = 0;
+	int32_t error = 0;
 	if(strnlen(parent,ZFS_MAX_DATASET_NAME_LEN)+strnlen(name,ZFS_MAX_DATASET_NAME_LEN)+1 > ZFS_MAX_DATASET_NAME_LEN)
 	{
 		// name would be too long.
@@ -306,4 +315,75 @@ uint32_t create_home_dataset(const char* name, const char* parent)
 cleanup:
 	libzfs_core_fini();
 	return error;
+}
+
+/**
+ * Executes the command specified by cmd and returns its exit code.
+ * param cmd command to execute
+ * param argv arguments to command (the first must be the command being executed)
+ * param output optional buffer where the contents of stdout should go (255 characters max).
+ */
+int32_t run_command(const char* cmd, char** argv, void* output)
+{
+	int32_t out_pipe[2];
+	int32_t child_pid;
+	int32_t status = 0;
+	int32_t ret= 0;
+	FILE* out_file;
+	int32_t blackhole;
+
+	blackhole = open("/dev/null", O_WRONLY);
+	if(output == NULL)
+	{
+		out_pipe[0] = open("/dev/null", O_WRONLY);
+		out_pipe[1] = open("/dev/null", O_WRONLY);
+	}
+	else
+	{
+		pipe(out_pipe);
+	}
+	
+	child_pid = fork();
+
+	if(child_pid>0)
+	{
+		//parent
+		close(out_pipe[1]);
+		out_file = fdopen(out_pipe[0], "r");
+		fgets(output, 255, out_file);
+		close(out_pipe[0]);
+		waitpid(child_pid,&status,0);
+		close(blackhole);
+		// check exit status
+		if(!WIFEXITED(status))
+		{
+			return -1;
+		}
+		return WEXITSTATUS(status);
+
+	}
+	else if(child_pid==0)
+	{
+		//child
+		close(out_pipe[0]);
+		// output redirection
+		dup2(out_pipe[1], STDOUT_FILENO);
+		dup2(blackhole, STDERR_FILENO);
+		execvp(cmd, argv);
+
+	} 
+	else 
+	{
+		return -1;
+	}
+
+}
+int32_t slurm_check_user(const char* name)
+{
+	// TOOD
+}
+
+int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts)
+{
+	// TODO
 }
