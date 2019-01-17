@@ -296,8 +296,8 @@ int32_t create_home_dataset(const char* name, const char* parent)
 	char* dataset = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
 	//assemble the string
 	strncpy(dataset, parent, ZFS_MAX_DATASET_NAME_LEN);
-	strncpy(dataset,"/\0",2);
-	strncpy(dataset,name,ZFS_MAX_DATASET_NAME_LEN);
+	strncat(dataset,"/",2);
+	strncat(dataset,name,ZFS_MAX_DATASET_NAME_LEN);
 	if(lzc_exists(dataset))
 	{
 		// dataset already exists
@@ -321,7 +321,7 @@ cleanup:
  * Executes the command specified by cmd and returns its exit code.
  * param cmd command to execute
  * param argv arguments to command (the first must be the command being executed)
- * param output optional buffer where the contents of stdout should go (255 characters max).
+ * param output optional buffer where the contents of stdout should go (single line 255 characters max).
  */
 int32_t run_command(const char* cmd, char** argv, void* output)
 {
@@ -370,6 +370,7 @@ int32_t run_command(const char* cmd, char** argv, void* output)
 		dup2(out_pipe[1], STDOUT_FILENO);
 		dup2(blackhole, STDERR_FILENO);
 		execvp(cmd, argv);
+		exit(errno);
 
 	} 
 	else 
