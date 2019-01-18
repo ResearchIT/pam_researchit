@@ -3,7 +3,6 @@
 #define PAM_SM_SESSION
 #include <security/pam_modules.h>
 #include <security/pam_ext.h>
-#include <libzfs_core.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -12,10 +11,14 @@
 #include <pwd.h>
 #include <regex.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <wait.h>
-#include <fcntl.h>
+#include <libzfs_core.h>
+
 
 #define MODULE_NAME "pam_researchit"
 #define MAX_GROUPS 128
@@ -33,6 +36,7 @@ void free_string_array(char** array, int32_t size);
 int32_t get_groups(const char* username, char** buf);
 int32_t filter_groups(char*** buf, int32_t size, const char* regex);
 int32_t create_home_dataset(const char* name, const char* parent);
+int32_t create_home_directory(char* username, char* path);
 int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts);
@@ -93,9 +97,10 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 
 	}
 	strcpy(username,*temp);
-	if(username=="root")
+	if(!strcmp(username,"root"))
 	{
-		//stop and exit
+		error = PAM_SUCCESS;
+		goto cleanup;
 	}
 	// get and then filter groups
 	retval = get_groups(username,groups);
@@ -317,6 +322,45 @@ cleanup:
 	return error;
 }
 
+int32_t create_home_directory(char* username, char* path)
+{
+	// TODO
+	// assume path exists
+	// copy skel
+	// recursively set owner.
+	// I could do all this in native C
+	// or! I could use programs that already do this via my
+	// crap execvp function.
+	int32_t ret;
+	struct stat status;
+	char** args = calloc(4, sizeof(char));
+	if(lstat(path,&status) || lstat("/etc/skel", &status))
+	{
+		return errno;
+	}
+
+	args[0] = "cp";
+	args[1] = "-r";
+	args[2] = "/etc/skel/.";
+	args[3] = path;
+	ret = run_command("cp", args, NULL);
+	if(ret)
+	{
+		free(args);
+		return -1;
+	}
+	args[0] = "chown";
+	args[1] = "-R";
+	args[2] = username;
+	args[3] = path;
+	ret = run_command("chown", args, NULL);
+	free(args);
+	if(ret)
+	{
+		return -1;
+	}
+}
+
 /**
  * Executes the command specified by cmd and returns its exit code.
  * param cmd command to execute
@@ -350,7 +394,8 @@ int32_t run_command(const char* cmd, char** argv, void* output)
 		//parent
 		close(out_pipe[1]);
 		out_file = fdopen(out_pipe[0], "r");
-		fgets(output, 255, out_file);
+		if(output != NULL)
+			fgets(output, 255, out_file);
 		close(out_pipe[0]);
 		waitpid(child_pid,&status,0);
 		close(blackhole);
