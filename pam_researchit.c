@@ -12,6 +12,7 @@
 #include <regex.h>
 #include <errno.h>
 #include <sys/types.h>
+#define __USE_LARGEFILE64 //required for libspl's sys/stat.h
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -36,7 +37,7 @@ void free_string_array(char** array, int32_t size);
 int32_t get_groups(const char* username, char** buf);
 int32_t filter_groups(char*** buf, int32_t size, const char* regex);
 int32_t create_home_dataset(const char* name, const char* parent);
-int32_t create_home_directory(char* username, char* path);
+int32_t create_home_directory(const char* username, const char* path);
 int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts);
@@ -51,7 +52,6 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	char* zfs_root;
 	char* group_regex;
 	char* token;
-	int32_t ngroups = MAX_GROUPS;
 	char** groups = get_group_array(MAX_GROUPS);
 	if(groups == (char**)-1)
 	{
@@ -321,8 +321,14 @@ cleanup:
 	libzfs_core_fini();
 	return error;
 }
-
-int32_t create_home_directory(char* username, char* path)
+/**
+ * Does the whole 'mkhomedir' thing
+ * Copies /etc/skel, which is more or less assumed to exist
+ * Chowns (with the chown binary, because I'm lazy)
+ * param username user who is to own this directory
+ * param path path to the user's homedir (assumed to exist)
+ */
+int32_t create_home_directory(const char* username, const char* path)
 {
 	// TODO
 	// assume path exists
@@ -333,7 +339,7 @@ int32_t create_home_directory(char* username, char* path)
 	// crap execvp function.
 	int32_t ret;
 	struct stat status;
-	char** args = calloc(4, sizeof(char));
+	char** args = get_string_array(4, ZFS_MAX_DATASET_NAME_LEN+1);
 	if(lstat(path,&status) || lstat("/etc/skel", &status))
 	{
 		return errno;
@@ -342,7 +348,7 @@ int32_t create_home_directory(char* username, char* path)
 	args[0] = "cp";
 	args[1] = "-r";
 	args[2] = "/etc/skel/.";
-	args[3] = path;
+	strncpy(args[3], path, ZFS_MAX_DATASET_NAME_LEN+1);
 	ret = run_command("cp", args, NULL);
 	if(ret)
 	{
@@ -351,14 +357,15 @@ int32_t create_home_directory(char* username, char* path)
 	}
 	args[0] = "chown";
 	args[1] = "-R";
-	args[2] = username;
-	args[3] = path;
+	strncpy(args[2], username, 33);
+	strncpy(args[3], path, ZFS_MAX_DATASET_NAME_LEN+1);
 	ret = run_command("chown", args, NULL);
 	free(args);
 	if(ret)
 	{
 		return -1;
 	}
+	return 0;
 }
 
 /**
@@ -372,7 +379,6 @@ int32_t run_command(const char* cmd, char** argv, void* output)
 	int32_t out_pipe[2];
 	int32_t child_pid;
 	int32_t status = 0;
-	int32_t ret= 0;
 	FILE* out_file;
 	int32_t blackhole;
 
@@ -424,12 +430,96 @@ int32_t run_command(const char* cmd, char** argv, void* output)
 	}
 
 }
+/**
+ * Checks if a user already exists in the slurm accountdb
+ * param user the user's username
+ * returns 1 if the user exists
+ * returns 0 if the user does not exist
+ * returns -1 if error
+ */
 int32_t slurm_check_user(const char* name)
 {
-	// TOOD
-}
+	char** args = get_string_array(8,USER_NAME_LIMIT+1);
+	char* output = calloc(32, sizeof(char));
+	int32_t ret = 0;
+	args[0] = "sacctmgr";
+	args[1] = "--quiet";
+	args[2] = "--readonly";
+	args[3] = "--noheader";
+	args[4] = "-P";
+	args[5] = "list";
+	args[6] = "user";
+	strncpy(args[7], name, 33);
 
+	ret = run_command("sacctmgr",args,output);
+	if(ret == -1)
+	{
+		// an abnornal error occured
+		goto cleanup;
+	}
+	if(strnlen(output,32))
+	{
+		//if we get any output at all the user exists
+		ret = 1;
+	}
+	else
+	{
+		ret = 0;
+	}
+cleanup:
+	free_string_array(args,8);
+	free(output);
+	return ret;
+
+}
+/**
+ * Associates the user with the given accounts in the slurm database
+ * param username username of user
+ * param naccounts the number of accounts the user is in
+ * param accounts array of strings containing the account names
+ */
 int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts)
 {
-	// TODO
+	char** args = get_string_array(9, 33);
+	free(args[7]);
+	// 32 33 length strings + 31 commas
+	args[7] = calloc(1055, sizeof(char));
+	if(args[7] == (char*)NULL)
+	{
+		free_string_array(args,9);
+		return -1;
+	}
+	const char* acc = "Accounts=";
+	const char* defacc = "DefaultAccount=";
+	int32_t ret = 0;
+	args[0] = "sacctmgr";
+	args[1] = "--quiet";
+	args[2] = "--noheader";
+	args[3] = "-P";
+	args[4] = "add";
+	args[5] = "user";
+	strncpy(args[6], username, USER_NAME_LIMIT+1);
+	// args[7] is the account list
+	// args[8] is the default account
+	
+	// assemble account string
+	// logically, the user must be in one group at a minimum to have even been
+	// able to get this far into the pam process in our environment.
+	// but let's just check to be safe
+	if(naccounts < 1)
+	{
+		return -1;
+	}
+	strncpy(args[7], acc, 10);
+	strncat(args[7], accounts[0], 33);
+	for(int i = 1; i < naccounts; i++)
+	{
+		strncat(args[7],",",2);
+		strncat(args[7],accounts[i],33);
+	}
+	strncpy(args[8], defacc, 16);
+	strncat(args[8], accounts[0], 33);
+	ret = run_command("sacctmgr", args, NULL);
+	free_string_array(args, 9);
+	return ret;
 }
