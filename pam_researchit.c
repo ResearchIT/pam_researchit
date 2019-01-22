@@ -30,6 +30,7 @@
 #define MAX_REGEX_LENGTH 255
 #define DEFAULT_GROUP_REGEX "^[[:alnum:]]*-lab$"
 #define DEFAULT_ZFS_ROOT "tank/home"
+#define DEFAULT_HOME_ROOT "/home"
 
 char** get_string_array(int32_t nstrings, int32_t length);
 char** get_group_array(int32_t ngroups);
@@ -47,10 +48,12 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	//TODO
 	int32_t retval;
 	int32_t error = PAM_SUCCESS;
+	int32_t ngroups;
 	const char** temp;
 	char* username;
 	char* zfs_root;
 	char* group_regex;
+	char* home_root;
 	char* token;
 	char** groups = get_group_array(MAX_GROUPS);
 	if(groups == (char**)-1)
@@ -72,6 +75,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	// argument parsing
 	zfs_root = DEFAULT_ZFS_ROOT;
 	group_regex = DEFAULT_GROUP_REGEX;
+	home_root = DEFAULT_HOME_ROOT;
 	for(int i = 0; i < argc; i++)
 	{
 		strncpy(token, argv[i], 256);
@@ -84,6 +88,10 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		if(strcmp(key, "group_regex")== 0)
 		{
 			strncpy(group_regex, value, MAX_REGEX_LENGTH+1);
+		}
+		if(strcmp(key, "home_root") == 0)
+		{
+			strncpy(home_root, value, 256);
 		}
 	}
 
@@ -117,7 +125,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		error = PAM_SESSION_ERR;
 		goto cleanup;
 	}
-	
+	ngroups = retval;
 	
 	// ZFS STUFF
 	retval = create_home_dataset(username,zfs_root);
@@ -128,27 +136,48 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		{
 			pam_syslog(pamh, LOG_INFO, "Dataset creation for %s failed due to having too long a name.", username);
 		} else {
-			pam_syslog(pamh, LOG_INFO, "Dataset creation for %s failed for some reason.", username);
+			pam_syslog(pamh, LOG_WARNING, "Dataset creation for %s failed for some reason.", username);
 		}
 	}
-	// determine group membership
+	else
+	{
+		//skel stuff
+		char* path = calloc(256, sizeof(char));
+		if(path == (char*) NULL)
+		{
+			goto cleanup;
+		}
+		strncpy(path, home_root, 256);
+		strncat(path, "/", 2);
+		strncat(path, username, USER_NAME_LIMIT+1);
+		retval = create_home_directory(username, path);
+		free(path);
+		if(retval)
+		{
+			// directory create failed, whine
+			pam_syslog(pamh, LOG_WARNING, "Directory Creation for user %s failed for some reason.", username);
+		}
+	}
+	
 	// probably use slurmacctmgr
-	// 	//TODO
-	//	decide if make a pseudo library (unmaintainable)
-	//	decide if use libslurm/libslurmdbd (sucks, but can steal alot from user_functions.c in sacctmgr, also maintainability concerns)
-	//	fork and use slurmacctmgr directly (probably easier, but sort of shitty)
+	// TODO
 	// check if user account already exists, if so exit
-	//
+	if(slurm_check_user(username))
+	{
+		// we're good here
+		goto cleanup;
+	}
+
 	// attempt to add user to slurm account of all -lab groups
 	// set DefaultAccount to first -lab group we see
-	// deal with fallout of attempt to add to accounts that don't exist
-	//
-	// requiring admins to add the lab accounts prior to things being expected to work is easier logically and will simplify the pseudo code below
-	//
-	// 	if one lab group
-	// 		add user account with defaultaccount of lab group, if fail complain
-	// 	if more than one lab group
-	// 		pick a default, add associations for all others, if fail complain.
+	retval = slurm_add_user(username, ngroups, groups);
+	if(retval)
+	{
+		// some sort of error occured, whine
+		pam_syslog(pamh, LOG_WARNING, "An error was encountered when attempting to add user %s to the slurm account system.", username);
+		goto cleanup;
+	}
+	
 cleanup:
 	free(username);
 	free(zfs_root);
@@ -330,7 +359,6 @@ cleanup:
  */
 int32_t create_home_directory(const char* username, const char* path)
 {
-	// TODO
 	// assume path exists
 	// copy skel
 	// recursively set owner.
@@ -477,6 +505,7 @@ cleanup:
  * param username username of user
  * param naccounts the number of accounts the user is in
  * param accounts array of strings containing the account names
+ * return 0 if successful 
  */
 int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts)
 {
