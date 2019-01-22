@@ -41,7 +41,7 @@ int32_t create_home_dataset(const char* name, const char* parent);
 int32_t create_home_directory(const char* username, const char* path);
 int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
-int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts);
+int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
 
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
@@ -507,7 +507,7 @@ cleanup:
  * param accounts array of strings containing the account names
  * return 0 if successful 
  */
-int32_t slurm_add_user(const char* username, int32_t naccounts, const char** accounts)
+int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 {
 	char** args = get_string_array(9, 33);
 	free(args[7]);
