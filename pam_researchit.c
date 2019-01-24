@@ -537,7 +537,8 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	// but let's just check to be safe
 	if(naccounts < 1)
 	{
-		return -1;
+		ret =  -1;
+		goto cleanup;
 	}
 	strncpy(args[7], acc, 10);
 	strncat(args[7], accounts[0], 33);
@@ -549,6 +550,7 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	strncpy(args[8], defacc, 16);
 	strncat(args[8], accounts[0], 33);
 	ret = run_command("sacctmgr", args, NULL);
+cleanup:
 	free_string_array(args, 9);
 	return ret;
 }
