@@ -373,9 +373,9 @@ int32_t create_home_directory(const char* username, const char* path)
 		return errno;
 	}
 
-	args[0] = "cp";
-	args[1] = "-r";
-	args[2] = "/etc/skel/.";
+	strcpy(args[0], "cp");
+	strcpy(args[1], "-r");
+	strcpy(args[2], "/etc/skel/.");
 	strncpy(args[3], path, ZFS_MAX_DATASET_NAME_LEN+1);
 	ret = run_command("cp", args, NULL);
 	if(ret)
@@ -383,8 +383,8 @@ int32_t create_home_directory(const char* username, const char* path)
 		free(args);
 		return -1;
 	}
-	args[0] = "chown";
-	args[1] = "-R";
+	strcpy(args[0], "chown");
+	strcpy(args[1], "-R");
 	strncpy(args[2], username, 33);
 	strncpy(args[3], path, ZFS_MAX_DATASET_NAME_LEN+1);
 	ret = run_command("chown", args, NULL);
@@ -470,13 +470,13 @@ int32_t slurm_check_user(const char* name)
 	char** args = get_string_array(8,USER_NAME_LIMIT+1);
 	char* output = calloc(32, sizeof(char));
 	int32_t ret = 0;
-	args[0] = "sacctmgr";
-	args[1] = "--quiet";
-	args[2] = "--readonly";
-	args[3] = "--noheader";
-	args[4] = "-P";
-	args[5] = "list";
-	args[6] = "user";
+	strcpy(args[0], "sacctmgr");
+	strcpy(args[1], "--quiet");
+	strcpy(args[2], "--readonly");
+	strcpy(args[3], "--noheader");
+	strcpy(args[4], "-P");
+	strcpy(args[5], "list");
+	strcpy(args[6], "user");
 	strncpy(args[7], name, 33);
 
 	ret = run_command("sacctmgr",args,output);
@@ -521,12 +521,12 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	const char* acc = "Accounts=";
 	const char* defacc = "DefaultAccount=";
 	int32_t ret = 0;
-	args[0] = "sacctmgr";
-	args[1] = "--quiet";
-	args[2] = "--noheader";
-	args[3] = "-P";
-	args[4] = "add";
-	args[5] = "user";
+	strcpy(args[0], "sacctmgr");
+	strcpy(args[1], "--quiet");
+	strcpy(args[2], "--noheader");
+	strcpy(args[3], "-P");
+	strcpy(args[4], "add");
+	strcpy(args[5], "user");
 	strncpy(args[6], username, USER_NAME_LIMIT+1);
 	// args[7] is the account list
 	// args[8] is the default account
