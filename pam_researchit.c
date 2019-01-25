@@ -55,7 +55,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	int32_t retval;
 	int32_t error = PAM_SUCCESS;
 	int32_t ngroups;
-	const char** temp;
+	const char* temp;
 	char* username;
 	char* zfs_root;
 	char* group_regex;
@@ -98,7 +98,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	}
 
 	//get username
-	retval = pam_get_user(pamh, temp, "\0");
+	retval = pam_get_user(pamh, &temp, NULL);
 	if(retval != PAM_SUCCESS)
 	{
 		pam_syslog(pamh, LOG_INFO, "Failed to get username.");
@@ -106,7 +106,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		goto cleanup;
 
 	}
-	strcpy(username,*temp);
+	strcpy(username,temp);
 	if(!strcmp(username,"root"))
 	{
 		error = PAM_SUCCESS;
@@ -188,6 +188,11 @@ cleanup:
 	free(groups);
 	free(token);
 	return error;
+}
+
+PAM_EXTERN int pam_sm_close_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
+{
+	return PAM_SUCCESS;
 }
 /**
  * returns pointer to an array of strings of the given dimensions
