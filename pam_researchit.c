@@ -62,18 +62,13 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	char* home_root;
 	char* token;
 	char** groups = get_group_array(MAX_GROUPS);
-	if(groups == (char**)-1)
-	{
-		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
-		error = PAM_SYSTEM_ERR;
-		goto cleanup;
-	}
 	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
 	zfs_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
 	home_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
 	token = calloc(256, sizeof(char));
-	if(username == (char*)NULL || group_regex == (char*)NULL || zfs_root == (char*)NULL || token == (char*)NULL)
+	
+	if(groups == (char**)-1 || username == (char*)NULL || group_regex == (char*)NULL || zfs_root == (char*)NULL || token == (char*)NULL)
 	{
 		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
 		error = PAM_SYSTEM_ERR;
