@@ -354,6 +354,8 @@ int32_t create_home_dataset(const char* name, const char* parent)
 	{
 		goto cleanup;
 	}
+	// TODO mount dataset with mount(2)
+	
 cleanup:
 	libzfs_core_fini();
 	return error;
