@@ -43,6 +43,12 @@ int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
 
+/**
+ * arguments this module takes
+ * zfs_root parent dataset that the home dataset for a user should be created in
+ * home_root parent directory that home diretories are in
+ * group_regex posix regex to match for groups
+ */
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
 	//TODO
@@ -65,6 +71,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
 	zfs_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
+	home_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
 	token = calloc(256, sizeof(char));
 	if(username == (char*)NULL || group_regex == (char*)NULL || zfs_root == (char*)NULL || token == (char*)NULL)
 	{
@@ -73,9 +80,9 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		goto cleanup;
 	}
 	// argument parsing
-	zfs_root = DEFAULT_ZFS_ROOT;
-	group_regex = DEFAULT_GROUP_REGEX;
-	home_root = DEFAULT_HOME_ROOT;
+	strcpy(zfs_root, DEFAULT_ZFS_ROOT);
+	strcpy(group_regex, DEFAULT_GROUP_REGEX);
+	strcpy(home_root, DEFAULT_HOME_ROOT);
 	for(int i = 0; i < argc; i++)
 	{
 		strncpy(token, argv[i], 256);
@@ -182,6 +189,7 @@ cleanup:
 	free(username);
 	free(zfs_root);
 	free(group_regex);
+	free(home_root);
 	free(groups);
 	free(token);
 	return error;
