@@ -132,7 +132,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	// ZFS STUFF
 	retval = create_home_dataset(username,zfs_root);
 	//honestly it's not super important if the dataset creation fails.
-	if(retval)
+	if(retval && retval!= EEXIST)
 	{
 		if(retval==ENAMETOOLONG)
 		{
@@ -140,6 +140,10 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		} else {
 			pam_syslog(pamh, LOG_WARNING, "Dataset creation for %s failed for some reason.", username);
 		}
+	}
+	else if(retval == EEXIST)
+	{
+		// data set has been made already, do nothing
 	}
 	else
 	{
@@ -162,7 +166,6 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	}
 	
 	// probably use slurmacctmgr
-	// TODO
 	// check if user account already exists, if so exit
 	if(slurm_check_user(username))
 	{
@@ -342,10 +345,8 @@ int32_t create_home_dataset(const char* name, const char* parent)
 	strncat(dataset,name,ZFS_MAX_DATASET_NAME_LEN);
 	if(lzc_exists(dataset))
 	{
-		// dataset already exists
-		// this isn't an error dingus
-		// this is like the most common mode of operation
-		error = 0;
+		// who's the dingus now idiot?!
+		error = EEXIST;
 		goto cleanup;
 	}
 	// create the dataset as a regular zfs filesystem
@@ -354,7 +355,9 @@ int32_t create_home_dataset(const char* name, const char* parent)
 	{
 		goto cleanup;
 	}
-	// TODO mount dataset with mount(2)
+	// if libzfs gets to be lazy then I get to be even more lazy.
+	char* args[3] = {"zfs", "mount", dataset};
+	error = run_command("zfs",args, NULL);
 	
 cleanup:
 	libzfs_core_fini();
