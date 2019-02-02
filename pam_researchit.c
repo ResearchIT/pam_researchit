@@ -12,13 +12,10 @@
 #include <regex.h>
 #include <errno.h>
 #include <sys/types.h>
-#define __USE_LARGEFILE64 //required for libspl's sys/stat.h
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <wait.h>
-#include <libzfs_core.h>
 
 
 #define MODULE_NAME "pam_researchit"
@@ -29,16 +26,12 @@
 // why is your regex longer than 255
 #define MAX_REGEX_LENGTH 255
 #define DEFAULT_GROUP_REGEX "^[[:alnum:]]*-lab$"
-#define DEFAULT_ZFS_ROOT "tank/home"
-#define DEFAULT_HOME_ROOT "/home"
 
 char** get_string_array(int32_t nstrings, int32_t length);
 char** get_group_array(int32_t ngroups);
 void free_string_array(char** array, int32_t size);
 int32_t get_groups(const char* username, char** buf);
 int32_t filter_groups(char*** buf, int32_t size, const char* regex);
-int32_t create_home_dataset(const char* name, const char* parent);
-int32_t create_home_directory(const char* username, const char* path);
 int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
@@ -57,43 +50,29 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	int32_t ngroups;
 	const char* temp;
 	char* username;
-	char* zfs_root;
 	char* group_regex;
-	char* home_root;
 	char* token;
 	char** groups = get_group_array(MAX_GROUPS);
 	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
-	zfs_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
-	home_root = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
 	token = calloc(256, sizeof(char));
 	
-	if(groups == (char**)-1 || username == (char*)NULL || group_regex == (char*)NULL || zfs_root == (char*)NULL || token == (char*)NULL)
+	if(groups == (char**)-1 || username == (char*)NULL || group_regex == (char*)NULL || token == (char*)NULL)
 	{
 		pam_syslog(pamh, LOG_CRIT, "Failed to allocate memory.");
 		error = PAM_SYSTEM_ERR;
 		goto cleanup;
 	}
 	// argument parsing
-	strcpy(zfs_root, DEFAULT_ZFS_ROOT);
 	strcpy(group_regex, DEFAULT_GROUP_REGEX);
-	strcpy(home_root, DEFAULT_HOME_ROOT);
 	for(int i = 0; i < argc; i++)
 	{
 		strncpy(token, argv[i], 256);
 		char* key = strtok(token,"=");
 		char* value = strtok(NULL,"=");
-		if(strcmp(key, "zfs_root") == 0)
-		{
-			strncpy(zfs_root, value, ZFS_MAX_DATASET_NAME_LEN+1);
-		}
 		if(strcmp(key, "group_regex")== 0)
 		{
 			strncpy(group_regex, value, MAX_REGEX_LENGTH+1);
-		}
-		if(strcmp(key, "home_root") == 0)
-		{
-			strncpy(home_root, value, 256);
 		}
 	}
 
@@ -129,42 +108,6 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	}
 	ngroups = retval;
 	
-	// ZFS STUFF
-	retval = create_home_dataset(username,zfs_root);
-	//honestly it's not super important if the dataset creation fails.
-	if(retval && retval!= EEXIST)
-	{
-		if(retval==ENAMETOOLONG)
-		{
-			pam_syslog(pamh, LOG_INFO, "Dataset creation for %s failed due to having too long a name.", username);
-		} else {
-			pam_syslog(pamh, LOG_WARNING, "Dataset creation for %s failed for some reason.", username);
-		}
-	}
-	else if(retval == EEXIST)
-	{
-		// data set has been made already, do nothing
-	}
-	else
-	{
-		//skel stuff
-		char* path = calloc(256, sizeof(char));
-		if(path == (char*) NULL)
-		{
-			goto cleanup;
-		}
-		strncpy(path, home_root, 256);
-		strncat(path, "/", 2);
-		strncat(path, username, USER_NAME_LIMIT+1);
-		retval = create_home_directory(username, path);
-		free(path);
-		if(retval)
-		{
-			// directory create failed, whine
-			pam_syslog(pamh, LOG_WARNING, "Directory Creation for user %s failed for some reason.", username);
-		}
-	}
-	
 	// probably use slurmacctmgr
 	// check if user account already exists, if so exit
 	if(slurm_check_user(username))
@@ -185,9 +128,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	
 cleanup:
 	free(username);
-	free(zfs_root);
 	free(group_regex);
-	free(home_root);
 	free(groups);
 	free(token);
 	return error;
@@ -313,100 +254,6 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 	*buf = temper;
 	return j;
 
-}
-/**
- * Creates a ZFS dataset with the name parent/name
- * the parent is required to exist.
- * param name name of the dataset.
- * param parent parent dataset this will be a child of.
- */
-int32_t create_home_dataset(const char* name, const char* parent)
-{
-	// TODO
-	// testing
-	int32_t error = 0;
-	if(strnlen(parent,ZFS_MAX_DATASET_NAME_LEN)+strnlen(name,ZFS_MAX_DATASET_NAME_LEN)+1 > ZFS_MAX_DATASET_NAME_LEN)
-	{
-		// name would be too long.
-		return ENAMETOOLONG;
-	}
-	// init
-	error = libzfs_core_init();
-	if(error)
-	{
-		// failed to init libzfs_core
-		goto cleanup;
-	}
-	// allocate space for dataset name string
-	char* dataset = calloc(ZFS_MAX_DATASET_NAME_LEN+1, sizeof(char));
-	//assemble the string
-	strncpy(dataset, parent, ZFS_MAX_DATASET_NAME_LEN);
-	strncat(dataset,"/",2);
-	strncat(dataset,name,ZFS_MAX_DATASET_NAME_LEN);
-	if(lzc_exists(dataset))
-	{
-		// who's the dingus now idiot?!
-		error = EEXIST;
-		goto cleanup;
-	}
-	// create the dataset as a regular zfs filesystem
-	error = lzc_create(dataset,LZC_DATSET_TYPE_ZFS,NULL);
-	if(error)
-	{
-		goto cleanup;
-	}
-	// if libzfs gets to be lazy then I get to be even more lazy.
-	char* args[3] = {"zfs", "mount", dataset};
-	error = run_command("zfs",args, NULL);
-	
-cleanup:
-	libzfs_core_fini();
-	return error;
-}
-/**
- * Does the whole 'mkhomedir' thing
- * Copies /etc/skel, which is more or less assumed to exist
- * Chowns (with the chown binary, because I'm lazy)
- * param username user who is to own this directory
- * param path path to the user's homedir (assumed to exist)
- */
-int32_t create_home_directory(const char* username, const char* path)
-{
-	// assume path exists
-	// copy skel
-	// recursively set owner.
-	// I could do all this in native C
-	// or! I could use programs that already do this via my
-	// crap execvp function.
-	int32_t ret;
-	struct stat status;
-	char** args = get_string_array(4, ZFS_MAX_DATASET_NAME_LEN+1);
-	if(lstat(path,&status) || lstat("/etc/skel", &status))
-	{
-		return errno;
-	}
-
-	strcpy(args[0], "cp");
-	strcpy(args[1], "-r");
-	strcpy(args[2], "/etc/skel/.");
-	strncpy(args[3], path, ZFS_MAX_DATASET_NAME_LEN+1);
-	ret = run_command("cp", args, NULL);
-	if(ret)
-	{
-		free(args);
-		return -1;
-	}
-	strcpy(args[0], "chown");
-	strcpy(args[1], "-R");
-	strncpy(args[2], username, 33);
-	strncpy(args[3], path, ZFS_MAX_DATASET_NAME_LEN+1);
-	ret = run_command("chown", args, NULL);
-	free(args);
-	if(ret)
-	{
-		return -1;
-	}
-	return 0;
 }
 
 /**
