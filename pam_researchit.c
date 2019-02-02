@@ -38,8 +38,6 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 
 /**
  * arguments this module takes
- * zfs_root parent dataset that the home dataset for a user should be created in
- * home_root parent directory that home diretories are in
  * group_regex posix regex to match for groups
  */
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
