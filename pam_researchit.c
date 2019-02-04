@@ -382,7 +382,7 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	strcpy(args[0], "sacctmgr");
 	strcpy(args[1], "--quiet");
 	strcpy(args[2], "--noheader");
-	strcpy(args[3], "-P");
+	strcpy(args[3], "--immediate");
 	strcpy(args[4], "add");
 	strcpy(args[5], "user");
 	strncpy(args[6], username, USER_NAME_LIMIT+1);
