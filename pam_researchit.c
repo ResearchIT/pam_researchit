@@ -325,7 +325,7 @@ int32_t run_command(const char* cmd, char** argv, void* output)
  */
 int32_t slurm_check_user(const char* name)
 {
-	char** args = get_string_array(8,USER_NAME_LIMIT+1);
+	char** args = get_string_array(9,USER_NAME_LIMIT+1);
 	char* output = calloc(32, sizeof(char));
 	int32_t ret = 0;
 	strcpy(args[0], "sacctmgr");
@@ -336,6 +336,8 @@ int32_t slurm_check_user(const char* name)
 	strcpy(args[5], "list");
 	strcpy(args[6], "user");
 	strncpy(args[7], name, 33);
+	free(args[8]);
+	args[8] = (char*) NULL; //required for execvp call
 
 	ret = run_command("sacctmgr",args,output);
 	if(ret == -1)
@@ -353,7 +355,7 @@ int32_t slurm_check_user(const char* name)
 		ret = 0;
 	}
 cleanup:
-	free_string_array(args,8);
+	free_string_array(args,9);
 	free(output);
 	return ret;
 
@@ -367,7 +369,7 @@ cleanup:
  */
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 {
-	char** args = get_string_array(9, 33);
+	char** args = get_string_array(10, 33);
 	free(args[7]);
 	// 32 33 length strings + 31 commas
 	args[7] = calloc(1055, sizeof(char));
@@ -407,8 +409,10 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	}
 	strncpy(args[8], defacc, 16);
 	strncat(args[8], accounts[0], 33);
+	free(args[9]);
+	args[9] = (char*) NULL; //required for execvp
 	ret = run_command("sacctmgr", args, NULL);
 cleanup:
-	free_string_array(args, 9);
+	free_string_array(args, 10);
 	return ret;
 }
