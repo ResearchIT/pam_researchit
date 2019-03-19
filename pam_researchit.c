@@ -377,18 +377,24 @@ cleanup:
  */
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 {
-	char** args = get_string_array(10, 33);
-	free(args[7]);
-	// 32 33 length strings + 31 commas
-	args[7] = calloc(1055, sizeof(char));
-	if(args[7] == (char*)NULL)
-	{
-		free_string_array(args,9);
-		return -1;
-	}
-	const char* acc = "Accounts=";
-	const char* defacc = "DefaultAccount=";
 	int32_t ret = 0;
+	char** args = get_string_array(10, 33);
+	if(args == -1)
+	{
+		ret = -1;
+		goto cleanup;
+	}
+	free(args[7]);
+	free(args[8]);
+	// 32 33 length strings + 31 commas
+	args[7] = calloc((32*(GROUP_NAME_LIMIT+1))+31, sizeof(char));
+	//Space for group name and default account string
+	args[8] = calloc(47, sizeof(char));
+	if(args[7] == (char*)NULL || args[8] == (char*)NULL)
+	{
+		ret = -1;
+		goto cleanup;
+	}
 	strcpy(args[0], "sacctmgr");
 	strcpy(args[1], "--quiet");
 	strcpy(args[2], "--noheader");
@@ -408,15 +414,15 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 		ret =  -1;
 		goto cleanup;
 	}
-	strncpy(args[7], acc, 10);
-	strncat(args[7], accounts[0], 33);
+	strcpy(args[7], "Accounts=");
+	strncat(args[7], accounts[0], GROUP_NAME_LIMIT);
 	for(int i = 1; i < naccounts; i++)
 	{
-		strncat(args[7],",",2);
-		strncat(args[7],accounts[i],33);
+		strcat(args[7],",");
+		strncat(args[7],accounts[i], GROUP_NAME_LIMIT);
 	}
-	strncpy(args[8], defacc, 16);
-	strncat(args[8], accounts[0], 33);
+	strcpy(args[8], "DefaultAccount=");
+	strncat(args[8], accounts[0], GROUP_NAME_LIMIT);
 	free(args[9]);
 	args[9] = (char*) NULL; //required for execvp
 	ret = run_command("sacctmgr", args, NULL);
@@ -431,11 +437,95 @@ cleanup:
 
 /**
  * Check if an account exists in slurm
+ * @param acccount account to check for existance
+ * @return 1 if exists, 0 if not, -1 if error
  */
 int32_t slurm_check_account(const char* account)
 {
-	int ret = 0;
+	int32_t ret = 0;
+	char** args = get_string_array(9,GROUP_NAME_LIMIT+1);
+	char* output = calloc(32, sizeof(char));
+	strcpy(args[0], "sacctmgr");
+	strcpy(args[1], "--quiet");
+	strcpy(args[2], "--readonly");
+	strcpy(args[3], "--noheader");
+	strcpy(args[4], "-P");
+	strcpy(args[5], "list");
+	strcpy(args[6], "account");
+	strncpy(args[7], account, 33);
+	free(args[8]);
+	args[8] = (char*) NULL; //required for execvp call
 
+	ret = run_command("sacctmgr",args,output);
+	if(ret == -1)
+	{
+		// an abnornal error occured
+		goto cleanup;
+	}
+	if(strnlen(output,32))
+	{
+		//if we get any output at all the user exists
+		ret = 1;
+	}
+	else
+	{
+		ret = 0;
+	}
+cleanup:
+	free_string_array(args,9);
+	free(output);
 	return ret;
 }
- 
+
+/**
+ * Add an account to slurm
+ * @param account to add to slurm
+ * @param parent_account account which this account should descend from
+ * @return 1
+ */
+ int32_t slurm_add_account(const char* account, const char* parent_account)
+ {
+	int32_t ret = 0;
+	char** args = get_string_array(11, 33);
+	if(args == -1)
+	{
+		ret = -1;
+		goto cleanup;
+	}
+	const char* acc = "Accounts=";
+	const char* parent = "Parent=";
+	//allocate longer strings for these
+	free(args[7]);
+	free(args[8]);
+	free(args[9]);
+	args[7] = calloc(23+GROUP_NAME_LIMIT, sizeof(char));
+	args[8] = calloc(13+GROUP_NAME_LIMIT, sizeof(char));
+	args[9] = calloc(7+GROUP_NAME_LIMIT, sizeof(char));
+	if(args[7] == (char*)NULL || args[8] == (char*)NULL || args[9] == (char*)NULL)
+	{
+		ret = -1;
+		goto cleanup;
+	}
+	//assemble the arguments
+	strcpy(args[0], "sacctmgr");
+	strcpy(args[1], "--quiet");
+	strcpy(args[2], "--noheader");
+	strcpy(args[3], "--immediate");
+	strcpy(args[4], "add");
+	strcpy(args[5], "account");
+	strncpy(args[6], account, GROUP_NAME_LIMIT+1);
+	strcat(args[7], "Description=");
+	strncat(args[7], account, GROUP_NAME_LIMIT);
+	strcat(args[7], "'s account");
+	strcat(args[8], "Organization=");
+	strncat(args[8], account, GROUP_NAME_LIMIT);
+	strcpy(args[9], "Parent=");
+	strncat(args[9], parent, GROUP_NAME_LIMIT);
+	free(args[10]);
+	args[10] = (char*) NULL; //required for execvp
+	ret = run_command("sacctmgr", args, NULL);
+
+cleanup:
+	free_string_array(args, 11);
+	return ret;
+ }
