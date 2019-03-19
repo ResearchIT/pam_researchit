@@ -36,6 +36,8 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex);
 int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
+int32_t slurm_check_account(const char* account);
+int32_t slurm_add_account(const char* account, const char* parent);
 
 /**
  * arguments this module takes
@@ -403,7 +405,7 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 {
 	int32_t ret = 0;
 	char** args = get_string_array(10, 33);
-	if(args == -1)
+	if(args == (char**)-1)
 	{
 		ret = -1;
 		goto cleanup;
@@ -481,7 +483,7 @@ int32_t slurm_check_account(const char* account)
 	args[8] = (char*) NULL; //required for execvp call
 
 	ret = run_command("sacctmgr",args,output);
-	if(ret == -1)
+	if(args == (char**)-1)
 	{
 		// an abnornal error occured
 		goto cleanup;
@@ -507,17 +509,15 @@ cleanup:
  * @param parent_account account which this account should descend from
  * @return 0 on success
  */
- int32_t slurm_add_account(const char* account, const char* parent_account)
+ int32_t slurm_add_account(const char* account, const char* parent)
  {
 	int32_t ret = 0;
 	char** args = get_string_array(11, 33);
-	if(args == -1)
+	if(args == (char**)-1)
 	{
 		ret = -1;
 		goto cleanup;
 	}
-	const char* acc = "Accounts=";
-	const char* parent = "Parent=";
 	//allocate longer strings for these
 	free(args[7]);
 	free(args[8]);
