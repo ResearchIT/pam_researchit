@@ -1,6 +1,6 @@
 # pam_researchit
 A simple PAM module to do misc tasks on login.
-Right now all this does is assocate usernames with 
+Right now all this does is associate usernames with
 accounts in Slurm's accounting system based on a group
 naming scheme. The account must already exist in Slurm's
 accounting DB and must have the same name as the group you're 
@@ -17,8 +17,8 @@ This should be placed in the session section of the PAM config. You'll
 likely want it to be optional, but it shouldn't matter.
 
 ### Arguments
-Currently the only argument defined in group_regex which is the POSIX regex
-to be used to filter groups down to the desired groups. 
+Currently the only argument defined is group_regex which is the POSIX regex
+to be used to filter groups down to the desired groups.
 Default is:
 ```
 group_regex=^[[:alnum:]]*-lab$
