@@ -26,6 +26,7 @@
 // why is your regex longer than 255
 #define MAX_REGEX_LENGTH 255
 #define DEFAULT_GROUP_REGEX "^[[:alnum:]]*-lab$"
+#define DEFAULT_PARENT_ACCOUNT "pronto"
 
 char** get_string_array(int32_t nstrings, int32_t length);
 char** get_group_array(int32_t ngroups);
@@ -48,10 +49,12 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	const char* temp;
 	char* username;
 	char* group_regex;
+	char* parent_account;
 	char* token;
 	char** groups = get_group_array(MAX_GROUPS);
 	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
+	parent_account = calloc(GROUP_NAME_LIMIT+1, sizeof(char));
 	token = calloc(256, sizeof(char));
 	
 	if(groups == (char**)-1 || username == (char*)NULL || group_regex == (char*)NULL || token == (char*)NULL)
@@ -62,14 +65,19 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	}
 	// argument parsing
 	strcpy(group_regex, DEFAULT_GROUP_REGEX);
+	strcpy(parent_account, DEFAULT_PARENT_ACCOUNT);
 	for(int i = 0; i < argc; i++)
 	{
 		strncpy(token, argv[i], 256);
 		char* key = strtok(token,"=");
 		char* value = strtok(NULL,"=");
-		if(strcmp(key, "group_regex")== 0)
+		if(strcmp(key, "group_regex") == 0)
 		{
 			strncpy(group_regex, value, MAX_REGEX_LENGTH+1);
+		}
+		if(strcmp(key, "parent_account") == 0)
+		{
+			strncpy(parent_account, value, GROUP_NAME_LIMIT+1);
 		}
 	}
 
@@ -112,6 +120,22 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		// we're good here
 		goto cleanup;
 	}
+	// user does not exist, let's go through the account list and make sure they all do before adding the user
+	for(int32_t i = 0; i < ngroups; i++)
+	{
+		if(!slurm_check_account(groups[i]))
+		{
+			// account does not exist, add it
+			if(slurm_add_account(groups[i], parent_account))
+			{
+				// error, continue, but be loud
+				pam_syslog(pamh, LOG_INFO, "Failed to add accounts for user %s. This means they will not have an account in slurm. Fix it.", username);
+				goto cleanup;
+			}
+		}
+
+	}
+
 
 	// attempt to add user to slurm account of all -lab groups
 	// set DefaultAccount to first -lab group we see
@@ -481,7 +505,7 @@ cleanup:
  * Add an account to slurm
  * @param account to add to slurm
  * @param parent_account account which this account should descend from
- * @return 1
+ * @return 0 on success
  */
  int32_t slurm_add_account(const char* account, const char* parent_account)
  {

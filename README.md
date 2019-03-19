@@ -17,9 +17,15 @@ This should be placed in the session section of the PAM config. You'll
 likely want it to be optional, but it shouldn't matter.
 
 ### Arguments
-Currently the only argument defined is group_regex which is the POSIX regex
+Currently the only arguments defined are group_regex which is the POSIX regex
 to be used to filter groups down to the desired groups.
 Default is:
 ```
 group_regex=^[[:alnum:]]*-lab$
+```
+and parent_account which is the account (that must exist) in the slurm accounting database
+that all accounts created by this should be descended from.
+Default is:
+```
+parent_account=pronto
 ```
