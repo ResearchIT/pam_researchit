@@ -1,0 +1,12 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: researchit/pam_researchit:centos7
+
+    steps:
+      - checkout
+
+      - run:
+          name: make 
+          command: make
