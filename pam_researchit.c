@@ -26,6 +26,7 @@
 // why is your regex longer than 255
 #define MAX_REGEX_LENGTH 255
 #define DEFAULT_GROUP_REGEX "^[[:alnum:]]*-lab$"
+#define DEFAULT_PARENT_ACCOUNT "pronto"
 
 char** get_string_array(int32_t nstrings, int32_t length);
 char** get_group_array(int32_t ngroups);
@@ -35,6 +36,8 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex);
 int32_t run_command(const char* cmd, char** argv, void* output);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
+int32_t slurm_check_account(const char* account);
+int32_t slurm_add_account(const char* account, const char* parent);
 
 /**
  * arguments this module takes
@@ -42,17 +45,18 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
  */
 PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
-	//TODO
 	int32_t retval;
 	int32_t error = PAM_SUCCESS;
 	int32_t ngroups;
 	const char* temp;
 	char* username;
 	char* group_regex;
+	char* parent_account;
 	char* token;
 	char** groups = get_group_array(MAX_GROUPS);
 	username = calloc(USER_NAME_LIMIT+1, sizeof(char));
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
+	parent_account = calloc(GROUP_NAME_LIMIT+1, sizeof(char));
 	token = calloc(256, sizeof(char));
 	
 	if(groups == (char**)-1 || username == (char*)NULL || group_regex == (char*)NULL || token == (char*)NULL)
@@ -63,14 +67,19 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	}
 	// argument parsing
 	strcpy(group_regex, DEFAULT_GROUP_REGEX);
+	strcpy(parent_account, DEFAULT_PARENT_ACCOUNT);
 	for(int i = 0; i < argc; i++)
 	{
 		strncpy(token, argv[i], 256);
 		char* key = strtok(token,"=");
 		char* value = strtok(NULL,"=");
-		if(strcmp(key, "group_regex")== 0)
+		if(strcmp(key, "group_regex") == 0)
 		{
 			strncpy(group_regex, value, MAX_REGEX_LENGTH+1);
+		}
+		if(strcmp(key, "parent_account") == 0)
+		{
+			strncpy(parent_account, value, GROUP_NAME_LIMIT+1);
 		}
 	}
 
@@ -113,6 +122,22 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 		// we're good here
 		goto cleanup;
 	}
+	// user does not exist, let's go through the account list and make sure they all do before adding the user
+	for(int32_t i = 0; i < ngroups; i++)
+	{
+		if(!slurm_check_account(groups[i]))
+		{
+			// account does not exist, add it
+			if(slurm_add_account(groups[i], parent_account))
+			{
+				// error, continue, but be loud
+				pam_syslog(pamh, LOG_INFO, "Failed to add accounts for user %s. This means they will not have an account in slurm. Fix it.", username);
+				goto cleanup;
+			}
+		}
+
+	}
+
 
 	// attempt to add user to slurm account of all -lab groups
 	// set DefaultAccount to first -lab group we see
@@ -138,6 +163,10 @@ PAM_EXTERN int pam_sm_close_session(pam_handle_t* pamh, int flags, int argc, con
 }
 /**
  * returns pointer to an array of strings of the given dimensions
+ * @param nstrings number of strings in the array
+ * @param length length of the strings
+ * @return a pointer to the array of strings specified which must be freed with free_string_array
+ * @see free_string_array()
  */
 char** get_string_array(int32_t nstrings, int32_t length)
 {
@@ -160,6 +189,8 @@ char** get_string_array(int32_t nstrings, int32_t length)
 }
 /**
  * returns empty aray for ngroups groups
+ * @param ngroups number of groups this array should hold
+ * @return pointer to array of specified size
  */
 char** get_group_array(int32_t ngroups)
 {
@@ -167,6 +198,9 @@ char** get_group_array(int32_t ngroups)
 }
 /**
  * free an array of strings of given size.
+ * @param pointer to array created with get_string_array()
+ * @param size of array
+ * @see get_string_array()
  */
 void free_string_array(char** array, int32_t size)
 {
@@ -178,8 +212,9 @@ void free_string_array(char** array, int32_t size)
 }
 /**
  * Returns the number of groups the given username is in
- * param username the username to look up groups for
- * param buf an array of strings representing the group names
+ * @param username the username to look up groups for
+ * @param buf an array of strings representing the group names
+ * @return number of groups
  */
 int32_t get_groups(const char* username, char** buf)
 {
@@ -209,8 +244,9 @@ int32_t get_groups(const char* username, char** buf)
  * Returns the number of groups that match the specified filter
  * this will also be the size of buf upon returning. Returns -1
  * if error.
- * param buf pointer to the string array that will be filtered
- * param size size of the array of strings
+ * @param buf pointer to the string array that will be filtered
+ * @param size size of the array of strings
+ * @return number of groups that matched
  */
 int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 {
@@ -256,9 +292,9 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 
 /**
  * Executes the command specified by cmd and returns its exit code.
- * param cmd command to execute
- * param argv arguments to command (the first must be the command being executed)
- * param output optional buffer where the contents of stdout should go (single line 255 characters max).
+ * @param cmd command to execute
+ * @param argv arguments to command (the first must be the command being executed)
+ * @param output optional buffer where the contents of stdout should go (single line 255 characters max).
  */
 int32_t run_command(const char* cmd, char** argv, void* output)
 {
@@ -318,10 +354,8 @@ int32_t run_command(const char* cmd, char** argv, void* output)
 }
 /**
  * Checks if a user already exists in the slurm accountdb
- * param user the user's username
- * returns 1 if the user exists
- * returns 0 if the user does not exist
- * returns -1 if error
+ * @param user the user's username
+ * @return 1 if the user exists, 0 if not, -1 if error.
  */
 int32_t slurm_check_user(const char* name)
 {
@@ -362,25 +396,31 @@ cleanup:
 }
 /**
  * Associates the user with the given accounts in the slurm database
- * param username username of user
- * param naccounts the number of accounts the user is in
- * param accounts array of strings containing the account names
- * return 0 if successful 
+ * @param username username of user
+ * @param naccounts the number of accounts the user is in
+ * @param accounts array of strings containing the account names
+ * @return 0 if successful 
  */
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 {
-	char** args = get_string_array(10, 33);
-	free(args[7]);
-	// 32 33 length strings + 31 commas
-	args[7] = calloc(1055, sizeof(char));
-	if(args[7] == (char*)NULL)
-	{
-		free_string_array(args,9);
-		return -1;
-	}
-	const char* acc = "Accounts=";
-	const char* defacc = "DefaultAccount=";
 	int32_t ret = 0;
+	char** args = get_string_array(10, 33);
+	if(args == (char**)-1)
+	{
+		ret = -1;
+		goto cleanup;
+	}
+	free(args[7]);
+	free(args[8]);
+	// 32 33 length strings + 31 commas
+	args[7] = calloc((32*(GROUP_NAME_LIMIT+1))+31, sizeof(char));
+	//Space for group name and default account string
+	args[8] = calloc(47, sizeof(char));
+	if(args[7] == (char*)NULL || args[8] == (char*)NULL)
+	{
+		ret = -1;
+		goto cleanup;
+	}
 	strcpy(args[0], "sacctmgr");
 	strcpy(args[1], "--quiet");
 	strcpy(args[2], "--noheader");
@@ -400,19 +440,116 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 		ret =  -1;
 		goto cleanup;
 	}
-	strncpy(args[7], acc, 10);
-	strncat(args[7], accounts[0], 33);
+	strcpy(args[7], "Accounts=");
+	strncat(args[7], accounts[0], GROUP_NAME_LIMIT);
 	for(int i = 1; i < naccounts; i++)
 	{
-		strncat(args[7],",",2);
-		strncat(args[7],accounts[i],33);
+		strcat(args[7],",");
+		strncat(args[7],accounts[i], GROUP_NAME_LIMIT);
 	}
-	strncpy(args[8], defacc, 16);
-	strncat(args[8], accounts[0], 33);
+	strcpy(args[8], "DefaultAccount=");
+	strncat(args[8], accounts[0], GROUP_NAME_LIMIT);
 	free(args[9]);
 	args[9] = (char*) NULL; //required for execvp
 	ret = run_command("sacctmgr", args, NULL);
+	if(ret != 0)
+	{
+		//presumably what's gone wrong here is the default account
+	}
 cleanup:
 	free_string_array(args, 10);
 	return ret;
 }
+
+/**
+ * Check if an account exists in slurm
+ * @param acccount account to check for existance
+ * @return 1 if exists, 0 if not, -1 if error
+ */
+int32_t slurm_check_account(const char* account)
+{
+	int32_t ret = 0;
+	char** args = get_string_array(9,GROUP_NAME_LIMIT+1);
+	char* output = calloc(32, sizeof(char));
+	strcpy(args[0], "sacctmgr");
+	strcpy(args[1], "--quiet");
+	strcpy(args[2], "--readonly");
+	strcpy(args[3], "--noheader");
+	strcpy(args[4], "-P");
+	strcpy(args[5], "list");
+	strcpy(args[6], "account");
+	strncpy(args[7], account, 33);
+	free(args[8]);
+	args[8] = (char*) NULL; //required for execvp call
+
+	ret = run_command("sacctmgr",args,output);
+	if(args == (char**)-1)
+	{
+		// an abnornal error occured
+		goto cleanup;
+	}
+	if(strnlen(output,32))
+	{
+		//if we get any output at all the user exists
+		ret = 1;
+	}
+	else
+	{
+		ret = 0;
+	}
+cleanup:
+	free_string_array(args,9);
+	free(output);
+	return ret;
+}
+
+/**
+ * Add an account to slurm
+ * @param account to add to slurm
+ * @param parent_account account which this account should descend from
+ * @return 0 on success
+ */
+ int32_t slurm_add_account(const char* account, const char* parent)
+ {
+	int32_t ret = 0;
+	char** args = get_string_array(11, 33);
+	if(args == (char**)-1)
+	{
+		ret = -1;
+		goto cleanup;
+	}
+	//allocate longer strings for these
+	free(args[7]);
+	free(args[8]);
+	free(args[9]);
+	args[7] = calloc(23+GROUP_NAME_LIMIT, sizeof(char));
+	args[8] = calloc(13+GROUP_NAME_LIMIT, sizeof(char));
+	args[9] = calloc(7+GROUP_NAME_LIMIT, sizeof(char));
+	if(args[7] == (char*)NULL || args[8] == (char*)NULL || args[9] == (char*)NULL)
+	{
+		ret = -1;
+		goto cleanup;
+	}
+	//assemble the arguments
+	strcpy(args[0], "sacctmgr");
+	strcpy(args[1], "--quiet");
+	strcpy(args[2], "--noheader");
+	strcpy(args[3], "--immediate");
+	strcpy(args[4], "add");
+	strcpy(args[5], "account");
+	strncpy(args[6], account, GROUP_NAME_LIMIT+1);
+	strcat(args[7], "Description=");
+	strncat(args[7], account, GROUP_NAME_LIMIT);
+	strcat(args[7], "'s account");
+	strcat(args[8], "Organization=");
+	strncat(args[8], account, GROUP_NAME_LIMIT);
+	strcpy(args[9], "Parent=");
+	strncat(args[9], parent, GROUP_NAME_LIMIT);
+	free(args[10]);
+	args[10] = (char*) NULL; //required for execvp
+	ret = run_command("sacctmgr", args, NULL);
+
+cleanup:
+	free_string_array(args, 11);
+	return ret;
+ }
