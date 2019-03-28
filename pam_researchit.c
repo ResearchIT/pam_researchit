@@ -313,11 +313,6 @@ int32_t run_command(const char* cmd, char** argv, void* output, int32_t size)
 	}
 	else
 	{
-		if(size==NULL)
-		{
-			// I mean we told them to set it. Let's hope they were at least this big our we'll segfault
-			size = 8;
-		}
 		pipe(out_pipe);
 	}
 	
@@ -386,7 +381,7 @@ int32_t slurm_check_user(const char* name)
 		// an abnornal error occured
 		goto cleanup;
 	}
-	if(strnlen(output,32))
+	if(strnlen(output,buff_size))
 	{
 		//if we get any output at all the user exists
 		ret = 1;
@@ -458,7 +453,7 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	strncat(args[8], accounts[0], GROUP_NAME_LIMIT);
 	free(args[9]);
 	args[9] = (char*) NULL; //required for execvp
-	ret = run_command("sacctmgr", args, NULL, NULL);
+	ret = run_command("sacctmgr", args, NULL, 0);
 	if(ret != 0)
 	{
 		//presumably what's gone wrong here is the default account
@@ -496,7 +491,7 @@ int32_t slurm_check_account(const char* account)
 		// an abnornal error occured
 		goto cleanup;
 	}
-	if(strnlen(output,32))
+	if(strnlen(output,buff_size))
 	{
 		//if we get any output at all the user exists
 		ret = 1;
@@ -555,7 +550,7 @@ cleanup:
 	strncat(args[9], parent, GROUP_NAME_LIMIT);
 	free(args[10]);
 	args[10] = (char*) NULL; //required for execvp
-	ret = run_command("sacctmgr", args, NULL, NULL);
+	ret = run_command("sacctmgr", args, NULL, 0);
 
 cleanup:
 	free_string_array(args, 11);
