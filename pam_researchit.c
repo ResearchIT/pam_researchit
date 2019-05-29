@@ -33,7 +33,7 @@ char** get_group_array(int32_t ngroups);
 void free_string_array(char** array, int32_t size);
 int32_t get_groups(const char* username, char** buf);
 int32_t filter_groups(char*** buf, int32_t size, const char* regex);
-int32_t run_command(const char* cmd, char** argv, void* output);
+int32_t run_command(const char* cmd, char** argv, void* output, int32_t size);
 int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
 int32_t slurm_check_account(const char* account);
@@ -294,9 +294,10 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
  * Executes the command specified by cmd and returns its exit code.
  * @param cmd command to execute
  * @param argv arguments to command (the first must be the command being executed)
- * @param output optional buffer where the contents of stdout should go (single line 255 characters max).
+ * @param output optional buffer where the contents of stdout should go.
+ * @param size the size of the optional buffer, must be set
  */
-int32_t run_command(const char* cmd, char** argv, void* output)
+int32_t run_command(const char* cmd, char** argv, void* output, int32_t size)
 {
 	int32_t out_pipe[2];
 	int32_t child_pid;
@@ -323,7 +324,7 @@ int32_t run_command(const char* cmd, char** argv, void* output)
 		close(out_pipe[1]);
 		out_file = fdopen(out_pipe[0], "r");
 		if(output != NULL)
-			fgets(output, 255, out_file);
+			fgets(output, size, out_file);
 		close(out_pipe[0]);
 		waitpid(child_pid,&status,0);
 		close(blackhole);
@@ -359,8 +360,9 @@ int32_t run_command(const char* cmd, char** argv, void* output)
  */
 int32_t slurm_check_user(const char* name)
 {
+	int32_t buff_size = 32;
 	char** args = get_string_array(9,USER_NAME_LIMIT+1);
-	char* output = calloc(32, sizeof(char));
+	char* output = calloc(buff_size, sizeof(char));
 	int32_t ret = 0;
 	strcpy(args[0], "sacctmgr");
 	strcpy(args[1], "--quiet");
@@ -373,13 +375,13 @@ int32_t slurm_check_user(const char* name)
 	free(args[8]);
 	args[8] = (char*) NULL; //required for execvp call
 
-	ret = run_command("sacctmgr",args,output);
+	ret = run_command("sacctmgr",args,output,buff_size);
 	if(ret == -1)
 	{
 		// an abnornal error occured
 		goto cleanup;
 	}
-	if(strnlen(output,32))
+	if(strnlen(output,buff_size))
 	{
 		//if we get any output at all the user exists
 		ret = 1;
@@ -451,7 +453,7 @@ int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts)
 	strncat(args[8], accounts[0], GROUP_NAME_LIMIT);
 	free(args[9]);
 	args[9] = (char*) NULL; //required for execvp
-	ret = run_command("sacctmgr", args, NULL);
+	ret = run_command("sacctmgr", args, NULL, 0);
 	if(ret != 0)
 	{
 		//presumably what's gone wrong here is the default account
@@ -469,8 +471,9 @@ cleanup:
 int32_t slurm_check_account(const char* account)
 {
 	int32_t ret = 0;
+	int32_t buff_size = 32;
 	char** args = get_string_array(9,GROUP_NAME_LIMIT+1);
-	char* output = calloc(32, sizeof(char));
+	char* output = calloc(buff_size, sizeof(char));
 	strcpy(args[0], "sacctmgr");
 	strcpy(args[1], "--quiet");
 	strcpy(args[2], "--readonly");
@@ -482,13 +485,13 @@ int32_t slurm_check_account(const char* account)
 	free(args[8]);
 	args[8] = (char*) NULL; //required for execvp call
 
-	ret = run_command("sacctmgr",args,output);
+	ret = run_command("sacctmgr",args,output,buff_size);
 	if(args == (char**)-1)
 	{
 		// an abnornal error occured
 		goto cleanup;
 	}
-	if(strnlen(output,32))
+	if(strnlen(output,buff_size))
 	{
 		//if we get any output at all the user exists
 		ret = 1;
@@ -547,7 +550,7 @@ cleanup:
 	strncat(args[9], parent, GROUP_NAME_LIMIT);
 	free(args[10]);
 	args[10] = (char*) NULL; //required for execvp
-	ret = run_command("sacctmgr", args, NULL);
+	ret = run_command("sacctmgr", args, NULL, 0);
 
 cleanup:
 	free_string_array(args, 11);
