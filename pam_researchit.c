@@ -38,6 +38,7 @@ int32_t slurm_check_user(const char* name);
 int32_t slurm_add_user(const char* username, int32_t naccounts, char** accounts);
 int32_t slurm_check_account(const char* account);
 int32_t slurm_add_account(const char* account, const char* parent);
+pam_handle_t* pam_handle;
 
 /**
  * arguments this module takes
@@ -58,6 +59,7 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t* pamh, int flags, int argc, cons
 	group_regex = calloc(MAX_REGEX_LENGTH+1, sizeof(char));
 	parent_account = calloc(GROUP_NAME_LIMIT+1, sizeof(char));
 	token = calloc(256, sizeof(char));
+	pam_handle = pamh;
 	
 	if(groups == (char**)-1 || username == (char*)NULL || group_regex == (char*)NULL || token == (char*)NULL)
 	{
@@ -159,6 +161,7 @@ cleanup:
 
 PAM_EXTERN int pam_sm_close_session(pam_handle_t* pamh, int flags, int argc, const char** argv)
 {
+	pam_handle = NULL;
 	return PAM_SUCCESS;
 }
 /**
@@ -233,7 +236,16 @@ int32_t get_groups(const char* username, char** buf)
 		return -1;
 	for(int i = 0; i < ngroups; i++)
 	{
+		errno = 0;
 		usergrp = getgrgid(groups[i]);
+		int32_t error = errno;
+		if(usergrp == NULL)
+		{
+			//if group lookup fails, which it can for _reasons_
+			strncpy(buf[i], "fake-placeholder", 17);
+			pam_syslog(pam_handle, LOG_INFO, "Lookup of gid %d for user %s failed. Error was: %s", groups[i], username, strerror(error));
+			continue;
+		}
 		strncpy(buf[i], usergrp->gr_name,GROUP_NAME_LIMIT+1);
 	}
 	free(groups);
