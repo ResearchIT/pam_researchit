@@ -254,8 +254,9 @@ int32_t get_groups(const char* username, char** buf)
 
 /**
  * Returns the number of groups that match the specified filter
- * this will also be the size of buf upon returning. Returns -1
- * if error.
+ * this will also be the size of buf upon returning. Ensures that
+ * first group will be one that matches the first regex.
+ * Returns -1 if error.
  * @param buf pointer to the string array that will be filtered
  * @param size size of the array of strings
  * @return number of groups that matched
@@ -295,6 +296,42 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
     {
         strncpy(temper[i], temp[i],GROUP_NAME_LIMIT+1);
     }
+	regfree(&regex);
+	// sort
+	char* tempex = calloc(MAX_REGEX_LENGTH, sizeof(char));
+	strncpy(tempex, regex_string, MAX_REGEX_LENGTH);
+	char* first_regex = strtok(tempex, "|");
+	if(first_regex != NULL)
+	{
+		// we need to sort because we have a compound regex
+		ret = regcomp(&regex, first_regex, REG_ICASE|REG_NOSUB|REG_EXTENDED);
+		if(ret)
+		{
+			// regex compilation error
+			// not fatal
+			goto cleanup;
+		}
+		// we know at this point that temper is a filtered array of groups
+		char* holder;
+		if(regexec(&regex, temper[0], 0, NULL, 0))
+		{
+			// first group does not match regex
+			for(int i = 1; i < j; i++)
+			{
+				if(!regexec(&regex, temper[i], 0, NULL, 0))
+				{
+					// match, swap
+					holder = temper[i-1];
+					temper[i-1] = temper[i];
+					temper[i] = holder;
+					break;
+				}
+			}
+		}
+	}
+cleanup:
+	regfree(&regex);
+	free(tempex);
     free_string_array(temp,size);
 	free_string_array(*buf,size);
 	*buf = temper;
