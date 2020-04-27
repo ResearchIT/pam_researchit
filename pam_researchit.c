@@ -255,7 +255,8 @@ int32_t get_groups(const char* username, char** buf)
 /**
  * Returns the number of groups that match the specified filter
  * this will also be the size of buf upon returning. Ensures that
- * first group will be one that matches the first regex.
+ * first group will be one that matches the first regex assuming
+ * the user is in one.
  * Returns -1 if error.
  * @param buf pointer to the string array that will be filtered
  * @param size size of the array of strings
