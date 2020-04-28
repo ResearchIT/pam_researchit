@@ -302,7 +302,8 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 	char* tempex = calloc(MAX_REGEX_LENGTH, sizeof(char));
 	strncpy(tempex, regex_string, MAX_REGEX_LENGTH);
 	char* first_regex = strtok(tempex, "|");
-	if(first_regex != NULL)
+	char* delim = strchr(tempex, '|');
+	if(j > 1 && delim != NULL && first_regex != NULL)
 	{
 		// we need to sort because we have a compound regex
 		ret = regcomp(&regex, first_regex, REG_ICASE|REG_NOSUB|REG_EXTENDED);
