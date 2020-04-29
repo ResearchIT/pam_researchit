@@ -271,39 +271,39 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 		// error
 		return -1;
 	}
-    char** temper;
+	char** temper;
 	int ret = regcomp(&regex, regex_string, REG_ICASE|REG_NOSUB|REG_EXTENDED);
 	if(ret)
 	{
 		// regex compilation error
 		return -1;
 	}
-	int32_t j = 0;
+	int32_t num_matches = 0;
 	for(int i = 0; i < size; i++)
 	{
 		if(!regexec(&regex,(*buf)[i],0,NULL,0))
 		{
 			// match
-			strncpy(temp[j++],(*buf)[i],GROUP_NAME_LIMIT+1);
+			strncpy(temp[num_matches++],(*buf)[i],GROUP_NAME_LIMIT+1);
 		}
 	}
-    temper = get_group_array(j);
+	temper = get_group_array(num_matches);
 	if(temper==(char**)-1)
 	{
 		// error
 		return -1;
 	}
-    for(int i = 0; i < j; i++)
-    {
-        strncpy(temper[i], temp[i],GROUP_NAME_LIMIT+1);
-    }
+	for(int i = 0; i < num_matches; i++)
+	{
+		strncpy(temper[i], temp[i],GROUP_NAME_LIMIT+1);
+	}
 	regfree(&regex);
 	// sort
 	char* tempex = calloc(MAX_REGEX_LENGTH, sizeof(char));
 	strncpy(tempex, regex_string, MAX_REGEX_LENGTH);
 	char* first_regex = strtok(tempex, "|");
 	char* delim = strchr(tempex, '|');
-	if(j > 1 && delim != NULL && first_regex != NULL)
+	if(num_matches > 1 && delim != NULL && first_regex != NULL)
 	{
 		// we need to sort because we have a compound regex
 		ret = regcomp(&regex, first_regex, REG_ICASE|REG_NOSUB|REG_EXTENDED);
@@ -318,7 +318,7 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 		if(regexec(&regex, temper[0], 0, NULL, 0))
 		{
 			// first group does not match regex
-			for(int i = 1; i < j; i++)
+			for(int i = 1; i < num_matches; i++)
 			{
 				if(!regexec(&regex, temper[i], 0, NULL, 0))
 				{
@@ -334,10 +334,10 @@ int32_t filter_groups(char*** buf, int32_t size, const char* regex_string)
 cleanup:
 	regfree(&regex);
 	free(tempex);
-    free_string_array(temp,size);
+	free_string_array(temp,size);
 	free_string_array(*buf,size);
 	*buf = temper;
-	return j;
+	return num_matches;
 
 }
 
@@ -564,7 +564,7 @@ cleanup:
  * @return 0 on success
  */
  int32_t slurm_add_account(const char* account, const char* parent)
- {
+{
 	int32_t ret = 0;
 	char** args = get_string_array(11, 33);
 	if(args == (char**)-1)
@@ -606,4 +606,4 @@ cleanup:
 cleanup:
 	free_string_array(args, 11);
 	return ret;
- }
+}
