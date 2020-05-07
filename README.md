@@ -18,7 +18,9 @@ likely want it to be optional, but it shouldn't matter.
 
 ### Arguments
 Currently the only arguments defined are group_regex which is the POSIX regex
-to be used to filter groups down to the desired groups.
+to be used to filter groups down to the desired groups. If you specify a
+compound regex ie ```foo|bar``` the first regex is assumed to be the one you want your default slurm account to be for each user.
+
 Default is:
 ```
 group_regex=^[[:alnum:]]*-lab$
